@@ -1,0 +1,87 @@
+# Run when commits are pushed to main
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+- group: 'DevSecOps'
+- name: advancedsecurity.enable
+  value: false
+- name: advancedsecurity.skip
+  value: true
+- name: dockerRegistryServiceConnection
+  value: 'crdevsecopscl'
+- name: imageRepository
+  value: 'eshopweb'
+- name: containerRegistry
+  value: 'crdevsecopscl.azurecr.io'
+- name: dockerfilePath
+  value: '$(Build.SourcesDirectory)/src/Web/Dockerfile'
+- name: tag
+  value: '$(Build.BuildId)'
+
+stages:
+- stage: CI_Build
+  displayName: 'CI Build'
+  jobs:
+  - job: CI_Build
+    displayName: 'CI Build'
+    steps:  
+    - checkout: self
+    - task: DotNetCoreCLI@2
+      displayName: Restore 
+      inputs:
+        command: restore
+        projects: '**/*.csproj'
+    - task: DotNetCoreCLI@2
+      displayName: Build
+      inputs:
+        projects: '**/*.csproj'
+        arguments: '--configuration $(BuildConfiguration)'
+    # Build and push an image to Azure Container Registry
+    - task: Docker@2
+      displayName: Build and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        buildContext: '$(Build.SourcesDirectory)'
+        tags: |
+          $(tag)
+
+- stage: CD_Deploy
+  displayName: 'CD Deploy'
+  dependsOn: CI_Build
+  condition: succeeded()
+  jobs:
+  - job: CD_Deploy
+    displayName: 'CD Deploy'
+    steps:
+    - checkout: self
+    - task: Bash@3
+      displayName: Install azd
+      inputs:
+        targetType: 'inline'
+        script: |
+          curl -fsSL https://aka.ms/install-azd.sh | bash
+    # azd delegate auth to az to use service connection with AzureCLI@2
+    - pwsh: |
+        azd config set auth.useAzCliAuth "true"
+      displayName: Configure AZD to Use AZ CLI Authentication.
+    
+    - task: AzureCLI@2
+      displayName: Deploy Application
+      inputs:
+        azureSubscription: SC-RG-eshopweb
+        scriptType: bash
+        scriptLocation: inlineScript
+        keepAzSessionActive: true
+        inlineScript: |
+          azd deploy --no-prompt
+      env:
+        AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
+        AZURE_ENV_NAME: $(AZURE_ENV_NAME)
+        AZURE_LOCATION: $(AZURE_LOCATION)

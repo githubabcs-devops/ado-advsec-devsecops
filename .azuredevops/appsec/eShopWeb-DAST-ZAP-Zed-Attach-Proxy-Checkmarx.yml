@@ -1,0 +1,134 @@
+# https://www.zaproxy.org/
+# https://www.zaproxy.org/docs/
+# https://github.com/zaproxy/
+# https://www.zaproxy.org/docs/automate/
+
+name: Advanced Security - Zed Attack Proxy (ZAP) Full Scan
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+   
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+  ZAP_DOCKER_IMAGE: "zaproxy/zap-stable"
+  TARGET_URL: "https://app-web-3l2skjonvmtt4.azurewebsites.net/"
+  reportFile: "zap_report"
+  artifactName: ZAPReports
+  zapPlan: ".azuredevops/appsec/zap-af-plan.yaml"
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: AdvancedSecurity_ZAP
+    displayName: DAST Scanning with ZAP Security Scan
+    jobs:
+      - job: OWASP_ZAP_Scan
+        displayName: "OWASP ZAP Security Scan"
+        steps:
+          - script: |
+              docker pull $(ZAP_DOCKER_IMAGE)
+            displayName: "Pull OWASP ZAP Docker Image"
+          - script: |
+              docker run -t --rm \
+                -v /tmp:/zap/wrk/:rw \
+                $(ZAP_DOCKER_IMAGE) zap-baseline.py -t $(TARGET_URL) -r $(reportFile).html -x $(reportFile).xml -J $(reportFile).json
+              ls /tmp
+            displayName: "Run OWASP ZAP Baseline Scan"
+          - task: Bash@3
+            displayName: "Copy Zap reports"
+            inputs:
+              targetType: "inline"
+              script: |
+                echo "Copying Zap Reports to $(Build.ArtifactStagingDirectory)"
+                ls /tmp
+                sudo cp /tmp/zap*.* $(Build.ArtifactStagingDirectory)
+                # create file zap2junit.xsl
+                cat <<EOT >> zap2junit.xsl
+                <?xml version='1.0' ?>
+                <xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+                  <xsl:template match="/">
+                    <testsuites>
+                      <xsl:for-each select="OWASPZAPReport/site/alerts/alertitem">
+                        <testsuite>
+                          <xsl:attribute name="id">
+                            <xsl:value-of select="riskcode"/>
+                          </xsl:attribute>
+                          <xsl:attribute name="name">
+                            <xsl:value-of select="riskdesc"/>
+                          </xsl:attribute>
+                          <testcase>
+                            <xsl:attribute name="classname"/>
+                            <xsl:attribute name="name">
+                              <xsl:value-of select="name"/>
+                            </xsl:attribute>
+                            <failure>
+                              <xsl:attribute name="message">
+                                <xsl:value-of select="replace(replace(concat('Description: ', desc, ' Solution: ', solution, ' Reference: ', reference), '&lt;p&gt;', ''), '&lt;/p&gt;', ' ')"/>
+                              </xsl:attribute>
+                            </failure>
+                          </testcase>
+                        </testsuite>
+                      </xsl:for-each>
+                    </testsuites>
+                  </xsl:template>
+                </xsl:stylesheet>
+                EOT
+                cat zap2junit.xsl
+          - script: |
+              sudo apt-get update
+              sudo apt-get install -y libsaxonb-java
+              saxonb-xslt -xsl:zap2junit.xsl -s:$(Build.ArtifactStagingDirectory)/$(reportFile).xml -o:$(Build.ArtifactStagingDirectory)/junit_report.xml
+            displayName: "Convert ZAP XML to JUnit XML"
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish ZAP Report"
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+              ArtifactName: "$(artifactName)"
+              publishLocation: "Container"
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "$(Build.ArtifactStagingDirectory)/junit_report.xml"
+              failTaskOnFailedTests: false
+      - job: ZAP_Automation_Framework_Scan
+        displayName: "ZAP Automation Framework Scan"
+        condition: false
+        steps:
+        - script: |
+              docker pull $(ZAP_DOCKER_IMAGE)
+          displayName: "Pull ZAP Docker Image"
+        - script: |
+            docker run -t --rm \
+              -e "TARGET_URL=$(TARGET_URL)" -v $(System.DefaultWorkingDirectory):/zap/wrk/:rw --network="host" \
+              $(ZAP_DOCKER_IMAGE) zap.sh -cmd -autorun /zap/wrk/$(zapPlan)
+          displayName: "Run ZAP Automation Framework Scan"
+        - task: Bash@3
+          displayName: "Copy ZAP reports"
+          inputs:
+            targetType: "inline"
+            script: |
+              echo "Copying Zap Reports to $(Build.ArtifactStagingDirectory)"
+              ls '$(System.DefaultWorkingDirectory)'
+              sudo cp $(System.DefaultWorkingDirectory)/sarif.json $(Build.ArtifactStagingDirectory)
+        - task: PublishBuildArtifacts@1
+          displayName: "Publish ZAP Report"
+          inputs:
+            PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+            ArtifactName: "$(artifactName)"
+            publishLocation: "Container"
+        - task: AdvancedSecurity-Publish@1
+          displayName: Publish Scanning Results to Advanced Security
+          inputs:
+            Category: zap
+            SarifsInputDirectory: '$(Build.ArtifactStagingDirectory)'

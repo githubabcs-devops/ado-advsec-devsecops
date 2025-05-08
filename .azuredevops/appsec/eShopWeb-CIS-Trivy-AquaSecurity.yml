@@ -1,0 +1,87 @@
+# https://marketplace.visualstudio.com/items?itemName=AquaSecurityOfficial.trivy-official
+
+name: Advanced Security - Trivy Container Image Scanning
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  imageName: 'eshopweb'
+  tag: '$(Build.BuildId)'
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+  
+pool:
+  vmImage: "ubuntu-24.04"
+  
+stages:
+  - stage: AdvancedSecurity_Trivy
+    displayName: Container Image Scanning with Trivy (Aqua Security)
+    jobs:
+    - job: Build_and_Scan_Container_Image
+      displayName: Build and Scan Container Image (CIS)
+      steps:
+        - checkout: self
+          fetchDepth: 0
+        - task: DotNetCoreCLI@2
+          displayName: Restore 
+          inputs:
+            command: restore
+            projects: '**/*.csproj'
+        - task: DotNetCoreCLI@2
+          displayName: Build
+          inputs:
+            projects: '**/*.csproj'
+            arguments: '--configuration $(BuildConfiguration)'
+        - task: Docker@2
+          displayName: Build image
+          inputs:
+            repository: '$(imageName)'
+            command: 'build'
+            Dockerfile: 'src/Web/Dockerfile'
+            buildContext:  '$(System.DefaultWorkingDirectory)'
+            tags: '$(tag)'
+        - task: trivy@1
+          displayName: "Run Trivy Scanner"
+          inputs:
+            version: "latest"
+            exitCode: "0"
+            image: "$(imageName):$(tag)"
+            jsonOutput: false
+            sarifOutput: true        
+        - task: Bash@3
+          displayName: "Copy Trivy results to Artifacts"
+          inputs:
+            targetType: "inline"
+            script: |
+              echo "Copying Trivy results to $(Build.ArtifactStagingDirectory)"
+              ls $(Agent.TempDirectory)
+              sudo cp $(Agent.TempDirectory)/trivy/trivy-results*sarif.json $(Build.ArtifactStagingDirectory)/msdo-trivy.sarif
+        - task: PublishBuildArtifacts@1
+          displayName: "Publish Trivy results"
+          inputs:
+            PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+            ArtifactName: "CodeAnalysisLogs"
+            publishLocation: "Container"
+        - task: AdvancedSecurity-Publish@1
+          displayName: Publish Scanning Results to Advanced Security
+          inputs:
+            SarifsInputDirectory: '$(Build.ArtifactStagingDirectory)'
+        
+        - task: MicrosoftSecurityDevOps@1
+          displayName: 'Microsoft Security DevOps (trivy)'
+          inputs:
+            tools: 'trivy'
+        - task: AdvancedSecurity-Publish@1
+          displayName: Publish Scanning Results to Advanced Security
+          inputs:
+            SarifsInputDirectory: '$(Build.StagingDirectory)/.gdn'

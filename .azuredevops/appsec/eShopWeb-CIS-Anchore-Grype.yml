@@ -1,0 +1,99 @@
+# https://github.com/anchore/grype
+
+name: Advanced Security - Anchore Grype Vulnerability Scan (Container Image Scanning)
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  imageName: 'eshopwebapi'
+  tag: '$(Build.BuildId)'
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+  reportFormats: "json,sarif"
+  reportFile: "msdo"
+  artifactName: "GrypeResults"
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: AdvancedSecurity_Grype
+    displayName: Container Image Scanning with Anchore Grype
+    jobs:
+    - job: Build_and_Scan_Container_Image
+      displayName: Build and Scan Container Image (CIS)
+      steps:
+        - checkout: self
+          fetchDepth: 0
+        - task: DotNetCoreCLI@2
+          displayName: Restore 
+          inputs:
+            command: restore
+            projects: '**/*.csproj'
+        - task: DotNetCoreCLI@2
+          displayName: Build
+          inputs:
+            projects: '**/*.csproj'
+            arguments: '--configuration $(BuildConfiguration)'
+        - task: Docker@2
+          displayName: Build Docker image
+          inputs:
+            repository: '$(imageName)'
+            command: 'build'
+            Dockerfile: 'src/PublicApi/Dockerfile'
+            buildContext:  '$(System.DefaultWorkingDirectory)'
+            tags: '$(tag)'
+        - script: |
+              if ! command -v grype &> /dev/null
+              then
+                  echo "Installing Grype..."
+                  curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
+              else
+                  echo "Grype is already installed"
+              fi
+          displayName: "Install Grype if not already installed"
+        - script: |
+              echo "Scanning Docker image with Grype..."
+              grype $(imageName):$(tag) -o table
+
+              # loop through the report formats and generate reports
+              echo "Generating Grype reports $(reportFormats) ..."
+              for format in $(echo $(reportFormats) | tr "," "\n")
+              do
+                echo "Generating Grype report in $format format..."
+                grype $(imageName):$(tag) -o $format > $(reportFile).$format
+              done
+          displayName: "Scan Docker Image with Grype"
+        - task: CopyFiles@2
+          displayName: "Copy Grype reports to staging directory"
+          inputs:
+            SourceFolder: "$(System.DefaultWorkingDirectory)"
+            Contents: "$(reportFile).*"
+            TargetFolder: "$(Build.ArtifactStagingDirectory)"
+        - task: PublishBuildArtifacts@1
+          displayName: "Publish Grype reports as build artifact"
+          inputs:
+            PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+            ArtifactName: "$(artifactName)"
+            publishLocation: "container"
+        - task: PublishPipelineArtifact@1
+          displayName: "Publish Grype SARIF report as CodeAnalysisLogs artifact"
+          inputs:
+            targetPath: "$(System.DefaultWorkingDirectory)/$(reportFile).sarif"
+            artifact: "CodeAnalysisLogs"
+            publishLocation: "pipeline"
+        - task: AdvancedSecurity-Publish@1
+          displayName: Publish Scanning Results to Advanced Security
+          inputs:
+            Category: grype
+            SarifsInputDirectory: '$(Build.ArtifactStagingDirectory)'

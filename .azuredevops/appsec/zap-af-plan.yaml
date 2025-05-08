@@ -1,0 +1,24 @@
+---
+env:
+  contexts:
+  - name: "Context"
+    urls:
+    - ${TARGET_URL}
+  parameters:
+    failOnError: true
+    failOnWarning: true
+    progressToStdout: true
+jobs:
+- requests:
+  - url: ${TARGET_URL}
+  type: "requestor"
+- parameters:
+    template: "sarif-json"
+    reportDir: "/zap/wrk/"
+    reportFile: "sarif.json"
+  name: "sarif-report"
+  type: "report"
+- name: "activeScan"
+  type: "activeScan"
+  policyDefinition:
+    rules: []

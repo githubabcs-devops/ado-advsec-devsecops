@@ -1,0 +1,59 @@
+name: Advanced Security - Code Scanning
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: AdvancedSecurity_CodeQL
+    displayName: Code Scanning with GitHub Advanced Security
+    jobs:
+      - job: SAST_GHAS_Scan
+        displayName: 'SAST GHAS Code Scanning'
+        strategy:
+          matrix:
+            frontend:
+              language: javascript
+              buildtype: 'none'
+            backend:
+              language: csharp
+              buildtype: 'manual'
+        steps:
+        - task: AdvancedSecurity-Codeql-Init@1
+          displayName: Initialize CodeQL
+          inputs:
+            languages: '$(language)'
+            querysuite: 'security-and-quality'
+            buildtype: '$(buildtype)'
+            codeqlpathstoignore: tests
+        
+        - task: DotNetCoreCLI@2
+          displayName: Restore 
+          condition: and(succeeded(), eq(variables.language, 'csharp'))
+          inputs:
+            command: restore
+            projects: './src/Web/Web.csproj'
+        - task: DotNetCoreCLI@2
+          displayName: Build
+          condition: and(succeeded(), eq(variables.language, 'csharp'))
+          inputs:
+            projects: './src/Web/Web.csproj'
+            arguments: '--configuration $(BuildConfiguration)'
+        
+        - task: AdvancedSecurity-Codeql-Analyze@1 
+          displayName: Perform CodeQL Analysis

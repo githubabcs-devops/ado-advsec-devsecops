@@ -1,0 +1,34 @@
+trigger:
+- main
+
+schedules:
+- cron: 0 0 * * 0
+  displayName: Weekly Sunday build
+  branches:
+    include: [ main ]
+  always: true
+
+pool:
+  vmImage: windows-latest
+
+variables:
+- group: 'DevSecOps'
+- name: advancedsecurity.enable
+  value: false
+- name: advancedsecurity.skip
+  value: true
+
+steps:
+- task: ADOSecurityScanner@1
+  inputs:
+    ADOConnectionName: 'sc-ADOSecurityScanner'
+    OrgName: '$(System.CollectionUri)'
+    ProjectNames: 'DevSecOps'
+    ScanFilter: 'All'
+    BuildNames: '*'
+    ReleaseNames: '*'
+    ServiceConnectionNames: '*'
+    AgentPoolNames: '*'
+    VariableGroupNames: '*'
+    isBaseline: false
+    EnableOMSLogging: true

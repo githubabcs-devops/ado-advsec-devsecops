@@ -1,0 +1,74 @@
+# https://kubesec.io/
+# https://github.com/controlplaneio/kubesec
+
+name: SAST Kubesec Scanner
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+pool:
+  vmImage: "ubuntu-latest"
+  
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+  manifestFile: "$(System.DefaultWorkingDirectory)/manifests/critical-double.yaml"
+  reportFile: "msdo"
+  artifactName: kubesec-results
+
+stages:
+  - stage: AdvancedSecurity_Kubesec
+    displayName: Code Scanning with Kubesec
+    jobs:
+      - job: SAST_Kubesec_Scan
+        displayName: 'SAST Kubesec Scanning'
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - script: |
+              echo "installing kubesec"
+              curl -LO https://github.com/controlplaneio/kubesec/releases/latest/download/kubesec_linux_amd64.tar.gz
+              tar xzvf kubesec_linux_amd64.tar.gz
+              ls -la
+              chmod +x kubesec
+              sudo mv kubesec /usr/local/bin/kubesec
+
+              echo "kubesec version"
+              kubesec version
+              kubesec scan $(manifestFile) > $(Build.ArtifactStagingDirectory)/$(reportFile).json
+              cat $(Build.ArtifactStagingDirectory)/$(reportFile).json
+            displayName: "Scan Kubernetes Manifests with Kubesec"
+          - script: |
+              echo "Converting Kubesec scan results to SARIF format"
+              kubesec version
+              echo "running kubesec scan"
+              fileOutput=$(Build.ArtifactStagingDirectory)/$(reportFile).sarif
+              echo "fileOutput: $fileOutput"
+              kubesec scan $(manifestFile) --format template --template $(System.DefaultWorkingDirectory)/manifests/sarif.tpl > $fileOutput
+              sed -i 's|$(System.DefaultWorkingDirectory)/||g' $fileOutput
+              cat $fileOutput              
+            displayName: "Run Kubesec scan"
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: "$(Build.ArtifactStagingDirectory)"
+              artifactName: "$(artifactName)"
+          - task: PublishPipelineArtifact@1
+            displayName: "Publish kubesec SARIF report as CodeAnalysisLogs artifact"
+            inputs:
+              targetPath: "$(Build.ArtifactStagingDirectory)/$(reportFile).sarif"
+              artifact: "CodeAnalysisLogs"
+              publishLocation: "pipeline"
+          - task: AdvancedSecurity-Publish@1
+            displayName: Publish Scanning Results to Advanced Security
+            inputs:
+              SarifsInputDirectory: '$(Build.ArtifactStagingDirectory)'
+  

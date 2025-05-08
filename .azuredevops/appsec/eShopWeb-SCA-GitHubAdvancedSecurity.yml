@@ -1,0 +1,36 @@
+name: Advanced Security - Dependency Scanning
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: AdvancedSecurity_DependencyScanning
+    displayName: Dependency Scanning with GitHub Advanced Security
+    jobs:
+      - job: SCA_GHAS_Scan
+        steps:
+        - task: DotNetCoreCLI@2
+          displayName: Restore 
+          inputs:
+            command: restore
+            projects: '**/*.csproj'
+        - task: AdvancedSecurity-Dependency-Scanning@1
+          displayName: 'Dependency Scanning'
+          env:
+            DependencyScanning.Timeout: 600

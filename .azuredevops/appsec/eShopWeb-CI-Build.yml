@@ -1,0 +1,29 @@
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+ 
+stages:
+- stage: CI_Build
+  displayName: 'CI Build'
+  jobs:
+  - job: CI_Build
+    steps:  
+    - checkout: self
+    - task: DotNetCoreCLI@2
+      displayName: Restore 
+      inputs:
+        command: restore
+        projects: '**/*.csproj'
+    - task: DotNetCoreCLI@2
+      displayName: Build
+      inputs:
+        projects: '**/*.csproj'
+        arguments: '--configuration $(BuildConfiguration)'

@@ -1,0 +1,94 @@
+# https://github.com/anchore/syft
+
+name: Advanced Security - Anchore Syft SBOM Generation
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+  imageName: 'eshopwebapi'
+  tag: '$(Build.BuildId)'  
+  reportFormats: "syft-json,cyclonedx-json,cyclonedx-xml"
+  reportFile: "sbom"
+  artifactName: "SyftSBOMReports"
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: AdvancedSecurity_Syft
+    displayName: SBOM with Anchore Syft
+    jobs:
+    - job: Build_and_Scan_Container_Image
+      displayName: Build and Scan Container Image
+      steps:
+        - checkout: self
+          fetchDepth: 0
+        - task: DotNetCoreCLI@2
+          displayName: Restore 
+          inputs:
+            command: restore
+            projects: '**/*.csproj'
+        - task: DotNetCoreCLI@2
+          displayName: Build
+          inputs:
+            projects: '**/*.csproj'
+            arguments: '--configuration $(BuildConfiguration)'
+        - task: Docker@2
+          displayName: Build image
+          inputs:
+            repository: '$(imageName)'
+            command: 'build'
+            Dockerfile: 'src/PublicApi/Dockerfile'
+            buildContext:  '$(System.DefaultWorkingDirectory)'
+            tags: '$(tag)'
+        - script: |
+            if ! command -v syft &> /dev/null
+            then
+                echo "Syft is not installed. Installing now..." 
+                curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
+            else
+                echo "Syft is already installed"
+            fi
+          displayName: Install Syft if not already installed
+        - script: |
+            # loop through the report formats and generate reports
+            echo "Generating Syft reports $(reportFormats) ..."
+            for format in $(echo $(reportFormats) | tr "," "\n")
+            do
+              echo "Generating Syft report in $format format..."
+              # get extension based on format
+              case $format in
+                syft-json)
+                  extension="json"
+                  ;;
+                cyclonedx-json)
+                  extension="json"
+                  ;;
+                cyclonedx-xml)
+                  extension="xml"
+                  ;;
+                *)
+                  echo "Unsupported format: $format"
+                  exit 1
+                  ;;
+              esac
+              syft $(imageName):$(tag) -o $format > $(System.ArtifactsDirectory)/$(reportFile)_${format}.${extension}
+            done
+          displayName: Generate SBOM reports with Syft
+        - task: PublishBuildArtifacts@1
+          displayName: Publish SBOM reports
+          inputs:
+            pathToPublish: $(System.ArtifactsDirectory)
+            artifactName: $(artifactName)

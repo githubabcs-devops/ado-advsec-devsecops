@@ -1,0 +1,38 @@
+# https://learn.microsoft.com/en-us/azure/defender-for-cloud/azure-devops-extension
+
+name: Advanced Security - IaC Scanning - Microsoft Security DevOps (MSDO) - Defender for DevOps
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: AdvancedSecurity_IACS
+    displayName: IaC Scanning with Microsoft Security DevOps (MSDO)
+    jobs:
+      - job: MSDO
+        displayName: 'Microsoft Security DevOps Scanning'
+        steps:
+        - task: MicrosoftSecurityDevOps@1
+          displayName: "Microsoft Security DevOps (MSDO)"
+          inputs:
+            categories: 'IaC'
+            # break: boolean. Optional. If true, will fail this build step if any high severity level results are found. Default: false.
+        - task: AdvancedSecurity-Publish@1
+          inputs:
+            SarifsInputDirectory: '$(Build.ArtifactStagingDirectory)/.gdn/'

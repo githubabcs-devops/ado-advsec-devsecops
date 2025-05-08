@@ -1,0 +1,56 @@
+# https://github.com/microsoft/sbom-tool
+# https://github.com/microsoft/sbom-tool/blob/main/docs/setting-up-ado-pipelines.md
+
+name: Advanced Security - Microsoft SBOM Tool
+
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+schedules:
+  - cron: 0 1 * * 0
+    displayName: Weekly Sunday build
+    branches:
+      include: [main]
+    always: true
+
+variables:
+  advancedsecurity.enable: false
+  advancedsecurity.skip: true
+  tag: '$(Build.BuildId)'  
+  reportFile: "sbom"
+  artifactName: "SBOMReports"
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: AdvancedSecurity_Syft
+    displayName: SBOM with Anchore Syft
+    jobs:
+    - job: Build_and_Scan_Container_Image
+      displayName: Build and Scan Container Image
+      steps:
+        - checkout: self
+          fetchDepth: 0
+        - task: DotNetCoreCLI@2
+          displayName: Restore 
+          inputs:
+            command: restore
+            projects: '**/*.csproj'
+        - task: DotNetCoreCLI@2
+          displayName: Build
+          inputs:
+            projects: '**/*.csproj'
+            arguments: '--configuration $(BuildConfiguration)'
+        - script: |
+            curl -Lo $(Agent.TempDirectory)/sbom-tool https://github.com/microsoft/sbom-tool/releases/latest/download/sbom-tool-linux-x64
+            chmod +x $(Agent.TempDirectory)/sbom-tool
+            $(Agent.TempDirectory)/sbom-tool generate -b $(Build.ArtifactStagingDirectory) -bc $(Build.SourcesDirectory) -pn Test -pv 1.0.0 -ps MyCompany -nsb https://sbom.mycompany.com -V Verbose
+          displayName: Generate SBOM reports with Microsoft SBOM Tool
+        - task: PublishBuildArtifacts@1
+          displayName: Publish SBOM reports
+          inputs:
+            pathToPublish: $(System.ArtifactsDirectory)
+            artifactName: $(artifactName)
