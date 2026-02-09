@@ -7,6 +7,7 @@ param databaseName string
 param keyVaultName string
 param sqlAdmin string = 'sqlAdmin'
 param connectionStringKey string = 'AZURE-SQL-CONNECTION-STRING'
+param logAnalyticsWorkspaceId string = ''
 
 @secure()
 param sqlAdminPassword string
@@ -20,7 +21,7 @@ resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   properties: {
     version: '12.0'
     minimalTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
     administratorLogin: sqlAdmin
     administratorLoginPassword: sqlAdminPassword
   }
@@ -28,17 +29,6 @@ resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   resource database 'databases' = {
     name: databaseName
     location: location
-  }
-
-  resource firewall 'firewallRules' = {
-    name: 'Azure Services'
-    properties: {
-      // Allow all clients
-      // Note: range [0.0.0.0-0.0.0.0] means "allow all Azure-hosted clients only".
-      // This is not sufficient, because we also want to allow direct access from developer machine, for debugging purposes.
-      startIpAddress: '0.0.0.1'
-      endIpAddress: '255.255.255.254'
-    }
   }
 }
 
@@ -122,6 +112,54 @@ resource sqlAzureConnectionStringSercret 'Microsoft.KeyVault/vaults/secrets@2022
 
 resource keyVault 'Microsoft.KeyVault/vaults@2022-07-01' existing = {
   name: keyVaultName
+}
+
+// SQL Server auditing
+resource sqlServerAudit 'Microsoft.Sql/servers/auditingSettings@2022-05-01-preview' = {
+  name: 'default'
+  parent: sqlServer
+  properties: {
+    state: 'Enabled'
+    isAzureMonitorTargetEnabled: true
+    retentionDays: 90
+  }
+}
+
+// SQL Server diagnostic settings for security logging
+resource sqlServerDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(logAnalyticsWorkspaceId)) {
+  name: '${name}-diagnostics'
+  scope: sqlServer
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'SQLSecurityAuditEvents'
+        enabled: true
+        retentionPolicy: {
+          enabled: true
+          days: 90
+        }
+      }
+      {
+        category: 'DevOpsOperationsAudit'
+        enabled: true
+        retentionPolicy: {
+          enabled: true
+          days: 90
+        }
+      }
+    ]
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+        retentionPolicy: {
+          enabled: true
+          days: 90
+        }
+      }
+    ]
+  }
 }
 
 var connectionString = 'Server=${sqlServer.properties.fullyQualifiedDomainName}; Database=${sqlServer::database.name}; User=${appUser}'

@@ -21,6 +21,13 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 COPY --from=build /app/src/Web/out ./
 
+# Create non-root user and set ownership
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
 # Optional: Set this here if not setting it from docker-compose.yml
 # ENV ASPNETCORE_ENVIRONMENT Development
 

@@ -1,0 +1,80 @@
+name: IaC Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'infra/**'
+      - 'manifests/**'
+      - '**/Dockerfile'
+      - 'docker-compose*.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'infra/**'
+      - 'manifests/**'
+      - '**/Dockerfile'
+      - 'docker-compose*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  iac-security-scan:
+    name: IaC Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run Microsoft Security DevOps (Template Analyzer)
+        uses: microsoft/security-devops-action@v1
+        id: msdo
+        with:
+          tools: templateanalyzer
+        continue-on-error: true
+          
+      - name: Run Checkov IaC Scanner
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: bicep,kubernetes,dockerfile,docker_composition
+          output_format: sarif
+          output_file_path: results/checkov.sarif
+          soft_fail: true
+        continue-on-error: true
+          
+      - name: Run Trivy IaC Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'results/trivy-iac.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+        continue-on-error: true
+          
+      - name: Run Kubesec for Kubernetes Manifests
+        if: hashFiles('manifests/**/*.yaml') != ''
+        uses: controlplaneio/kubesec-action@v0.0.2
+        with:
+          input: manifests/
+        continue-on-error: true
+          
+      - name: Upload SARIF results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results/
+        continue-on-error: true
+          
+      - name: Upload scan results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-security-results
+          path: results/
+          retention-days: 30

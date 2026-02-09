@@ -3,9 +3,26 @@ kind: Pod
 metadata:
   name: kubesec-test
 spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
   containers:
   - name: kubesec-demo
     image: gcr.io/google-samples/node-hello:1.0
     securityContext:
-      allowPrivilegeEscalation: true
-      privileged: true
+      allowPrivilegeEscalation: false
+      privileged: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"

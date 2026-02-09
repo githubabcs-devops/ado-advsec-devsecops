@@ -22,4 +22,12 @@ RUN dotnet publish "./PublicApi.csproj" -c Release -o /app/publish
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+
+# Create non-root user and set ownership
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
 ENTRYPOINT ["dotnet", "PublicApi.dll"]

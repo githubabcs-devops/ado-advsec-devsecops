@@ -1,0 +1,124 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - infra/**
+      - manifests/**
+      - src/**/Dockerfile
+      - docker-compose*.yml
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - infra/**
+      - manifests/**
+      - src/**/Dockerfile
+      - docker-compose*.yml
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  azureSubscription: 'your-service-connection-name'  # Update this
+
+stages:
+- stage: IaCSecurityScan
+  displayName: 'IaC Security Scanning'
+  jobs:
+  - job: SecurityScanning
+    displayName: 'Run IaC Security Scanners'
+    steps:
+    - checkout: self
+      displayName: 'Checkout Repository'
+
+    - task: MicrosoftSecurityDevOps@1
+      displayName: 'Run Microsoft Security DevOps (Template Analyzer)'
+      inputs:
+        categories: 'IaC'
+        tools: 'templateanalyzer'
+      continueOnError: true
+
+    - script: |
+        # Create results directory
+        mkdir -p $(Build.ArtifactStagingDirectory)/security-results
+        
+        # Run Checkov
+        docker run --rm \
+          -v $(Build.SourcesDirectory):/src \
+          bridgecrew/checkov:latest \
+          -d /src \
+          --framework bicep kubernetes dockerfile docker-compose \
+          -o sarif \
+          --output-file-path /src/checkov-results.sarif \
+          --soft-fail
+        
+        # Move results
+        mv $(Build.SourcesDirectory)/checkov-results.sarif $(Build.ArtifactStagingDirectory)/security-results/ || true
+      displayName: 'Run Checkov IaC Scanner'
+      continueOnError: true
+
+    - script: |
+        # Run Trivy IaC scan
+        docker run --rm \
+          -v $(Build.SourcesDirectory):/src \
+          aquasec/trivy:latest \
+          config \
+          --format sarif \
+          --output /src/trivy-iac-results.sarif \
+          --severity CRITICAL,HIGH,MEDIUM \
+          /src
+        
+        # Move results
+        mv $(Build.SourcesDirectory)/trivy-iac-results.sarif $(Build.ArtifactStagingDirectory)/security-results/ || true
+      displayName: 'Run Trivy IaC Scanner'
+      continueOnError: true
+
+    - script: |
+        # Run Kubesec on Kubernetes manifests if they exist
+        if [ -d "$(Build.SourcesDirectory)/manifests" ]; then
+          docker run --rm \
+            -v $(Build.SourcesDirectory)/manifests:/manifests \
+            kubesec/kubesec:latest \
+            scan /manifests/*.yaml > $(Build.ArtifactStagingDirectory)/security-results/kubesec-results.json || true
+        fi
+      displayName: 'Run Kubesec for Kubernetes Manifests'
+      continueOnError: true
+
+    - script: |
+        # Run Hadolint on Dockerfiles
+        find $(Build.SourcesDirectory) -name "Dockerfile*" -type f | while read dockerfile; do
+          filename=$(basename "$dockerfile")
+          docker run --rm -i hadolint/hadolint:latest < "$dockerfile" > "$(Build.ArtifactStagingDirectory)/security-results/hadolint-${filename}.txt" || true
+        done
+      displayName: 'Run Hadolint on Dockerfiles'
+      continueOnError: true
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Security Scan Results'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/security-results'
+        ArtifactName: 'iac-security-results'
+        publishLocation: 'Container'
+      condition: always()
+
+    - task: PublishSecurityAnalysisLogs@3
+      displayName: 'Publish Security Analysis Logs'
+      inputs:
+        ArtifactName: 'CodeAnalysisLogs'
+      condition: always()
+
+    - task: PostAnalysis@2
+      displayName: 'Post Analysis'
+      inputs:
+        GdnBreakAllTools: false
+        GdnBreakGdnToolTemplateAnalyzer: true
+        GdnBreakPolicy: 'Microsoft'
+        GdnBreakPolicyMinSev: 'Warning'
+      condition: always()
